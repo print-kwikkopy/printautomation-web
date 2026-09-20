@@ -1,53 +1,44 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
+type CookieToSet = {
+  name: string;
+  value: string;
+  options?: Parameters<NextResponse["cookies"]["set"]>[2];
+};
+
 export async function middleware(request: NextRequest) {
-  let response = NextResponse.next({ request });
-
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const key = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
-
-  if (!url || !key) {
-    return response;
-  }
-
-  const supabase = createServerClient(url, key, {
-    cookies: {
-      getAll() {
-        return request.cookies.getAll();
-      },
-      setAll(cookiesToSet) {
-        cookiesToSet.forEach(({ name, value }) =>
-          request.cookies.set(name, value),
-        );
-
-        response = NextResponse.next({ request });
-
-        cookiesToSet.forEach(({ name, value, options }) =>
-          response.cookies.set(name, value, options),
-        );
-      },
-    },
+  let response = NextResponse.next({
+    request,
   });
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return request.cookies.getAll();
+        },
 
-  const path = request.nextUrl.pathname;
-  const isLogin = path === "/login";
+        setAll(cookiesToSet: CookieToSet[]) {
+          cookiesToSet.forEach(({ name, value }) => {
+            request.cookies.set(name, value);
+          });
 
-  if (!user && !isLogin) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    return NextResponse.redirect(loginUrl);
-  }
+          response = NextResponse.next({
+            request,
+          });
 
-  if (user && isLogin) {
-    const appUrl = request.nextUrl.clone();
-    appUrl.pathname = "/";
-    return NextResponse.redirect(appUrl);
-  }
+          cookiesToSet.forEach(({ name, value, options }) => {
+            response.cookies.set(name, value, options);
+          });
+        },
+      },
+    },
+  );
+
+  await supabase.auth.getUser();
 
   return response;
 }

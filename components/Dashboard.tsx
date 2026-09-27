@@ -496,6 +496,24 @@ export default function Dashboard(
   }
 
 
+  async function proceedWarning(command: Command) {
+    if (actioning || !command.warning_id || !command.warning_message ||
+        command.status !== "running" || command.warning_acknowledged_id === command.warning_id) return;
+    if (!window.confirm(`Resolve the PSV record lock before continuing.\n\n${command.warning_message}\n\nProceed with this warning?`)) return;
+    setActioning(command.id);
+    setNotice("");
+    try {
+      const { error } = await supabase.rpc("proceed_command_warning", {
+        target_command_id: command.id,
+        target_warning_id: command.warning_id,
+      });
+      if (error) setNotice(error.message);
+      else await loadCommands();
+    } finally {
+      setActioning(null);
+    }
+  }
+
   async function cancelCommand(
     command:
       Command,
@@ -1065,6 +1083,11 @@ export default function Dashboard(
                           [];
 
 
+                        const awaitingWarning =
+                          command.status === "running" &&
+                          Boolean(command.warning_id && command.warning_message) &&
+                          command.warning_acknowledged_id !== command.warning_id;
+
                         const canCancel =
                           command.status ===
                             "queued" ||
@@ -1179,6 +1202,14 @@ export default function Dashboard(
                               </button>
 
 
+                              {awaitingWarning && (
+                                <button type="button" className="command-action proceed-action"
+                                  disabled={isActioning}
+                                  onClick={() => void proceedWarning(command)}>
+                                  {isActioning ? "..." : "Proceed"}
+                                </button>
+                              )}
+
                               {
                                 canCancel &&
                                 (
@@ -1237,6 +1268,20 @@ export default function Dashboard(
                               isOpen &&
                               (
                                 <div className="command-detail">
+
+                                  {command.warning_message && command.status === "running" && (
+                                    <div role="alert" style={{ border: "1px solid #d6a642", borderRadius: 10, padding: 14, marginBottom: 14 }}>
+                                      <strong>PSV record locked</strong>
+                                      <p style={{ whiteSpace: "pre-wrap", margin: "8px 0" }}>{command.warning_message}</p>
+                                      {awaitingWarning ? (
+                                        <button type="button" className="command-action proceed-action"
+                                          disabled={isActioning}
+                                          onClick={() => void proceedWarning(command)}>
+                                          {isActioning ? "..." : "Proceed"}
+                                        </button>
+                                      ) : <span>Proceed acknowledged. Waiting for worker...</span>}
+                                    </div>
+                                  )}
 
                                   <div className="detail-grid">
 

@@ -192,6 +192,10 @@ export default function Dashboard(
     );
 
 
+  const [scheduledLocal, setScheduledLocal] = useState("");
+  const [confirmBatch, setConfirmBatch] = useState(false);
+  const lines = commandText.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+
   const [
     submitting,
     setSubmitting,
@@ -430,71 +434,34 @@ export default function Dashboard(
   );
 
 
-  async function submitCommand(
-    event:
-      FormEvent,
-  ) {
-
+  async function submitCommand(event: FormEvent) {
     event.preventDefault();
-
-
-    const raw =
-      commandText.trim();
-
-
-    if (
-      !raw ||
-      submitting
-    ) {
-      return;
+    if (submitting || lines.length === 0) return;
+    if (lines.length > 50) { setNotice("Maximum 50 commands per batch."); return; }
+    if (lines.some(line => line.length > 1000)) { setNotice("A command exceeds 1,000 characters."); return; }
+    const when = scheduledLocal ? new Date(scheduledLocal) : null;
+    if (when && (Number.isNaN(when.getTime()) || when.getTime() <= Date.now())) {
+      setNotice("Choose a future date and time, or select Run now."); return;
     }
-
-
-    setSubmitting(
-      true,
-    );
-
-    setNotice(
-      "",
-    );
-
-
-    const {
-      error,
-    } =
-      await supabase
-        .from(
-          "commands",
-        )
-        .insert({
-          raw_command:
-            raw,
-        });
-
-
-    if (
-      error
-    ) {
-
-      setNotice(
-        error.message,
-      );
-
-    } else {
-
-      setCommandText(
-        "",
-      );
-
+    if (!confirmBatch) { setConfirmBatch(true); return; }
+    setSubmitting(true);
+    setNotice("");
+    try {
+      const { error } = await supabase.rpc("enqueue_command_batch", {
+        command_lines: lines,
+        run_at: when ? when.toISOString() : null,
+      });
+      if (error) throw error;
+      setCommandText("");
+      setScheduledLocal("");
+      setConfirmBatch(false);
       await loadCommands();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : String(error));
+    } finally {
+      setSubmitting(false);
     }
-
-
-    setSubmitting(
-      false,
-    );
   }
-
 
   async function proceedWarning(command: Command) {
     if (actioning || !command.warning_id || !command.warning_message ||
@@ -872,21 +839,40 @@ export default function Dashboard(
               }
             >
 
-              <input
-                value={
-                  commandText
-                }
-                onChange={
-                  (
-                    event,
-                  ) =>
-                    setCommandText(
-                      event.target.value,
-                    )
-                }
-                placeholder="e.g. 69227 print"
-                autoFocus
-              />
+              <div style={{ display: "grid", gap: 10, width: "100%" }}>
+                <textarea
+                  value={commandText}
+                  onChange={event => { setCommandText(event.target.value); setConfirmBatch(false); }}
+                  onKeyDown={event => {
+                    if (event.key === "Enter" && event.shiftKey && !event.nativeEvent.isComposing) {
+                      event.preventDefault(); event.currentTarget.form?.requestSubmit();
+                    }
+                  }}
+                  placeholder={"69227 print\n50869 send invoice\ndaily pickup"}
+                  rows={5}
+                  autoFocus
+                  style={{ width: "100%", minHeight: 120, padding: 12, borderRadius: 10, resize: "vertical", boxSizing: "border-box", font: "inherit" }}
+                />
+                <label style={{ display: "grid", gap: 5 }}>
+                  <span>Schedule later (optional; your local time)</span>
+                  <input type="datetime-local" value={scheduledLocal}
+                    onChange={event => { setScheduledLocal(event.target.value); setConfirmBatch(false); }}
+                    min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
+                  />
+                </label>
+                <span style={{ fontSize: 12, opacity: 0.8 }}>
+                  {lines.length} command{lines.length === 1 ? "" : "s"} · Enter adds a line · Shift + Enter submits
+                </span>
+                {confirmBatch && (
+                  <div role="alert" style={{ border: "1px solid #d7a442", padding: 12, borderRadius: 10 }}>
+                    <strong>Confirm {lines.length} separate command{lines.length === 1 ? "" : "s"}</strong>
+                    <p>{scheduledLocal ? `Scheduled for ${new Date(scheduledLocal).toLocaleString("en-AU")}` : "Run as soon as the worker is available"}.</p>
+                    {lines.some(line => /\bpaid\b/i.test(line)) &&
+                      <p><strong>Payment command detected.</strong> Check the invoice numbers before confirming.</p>}
+                    <button type="button" onClick={() => setConfirmBatch(false)}>Edit commands</button>
+                  </div>
+                )}
+              </div>
 
               <button
                 className="primary-button"
@@ -897,7 +883,7 @@ export default function Dashboard(
                 {
                   submitting
                     ? "Adding..."
-                    : "Add to Queue"
+                    : confirmBatch ? `Confirm ${lines.length} commands` : "Review commands"
                 }
               </button>
 
@@ -1186,6 +1172,9 @@ export default function Dashboard(
                                   className={`status-pill ${command.status}`}
                                 >
                                   {command.status}
+                                  {command.status === "queued" && command.scheduled_for && new Date(command.scheduled_for).getTime() > Date.now() && (
+                                    <span style={{ marginLeft: 8, fontSize: 12 }}>Scheduled {new Date(command.scheduled_for).toLocaleString("en-AU")}</span>
+                                  )}
                                 </span>
 
 
